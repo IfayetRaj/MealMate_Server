@@ -35,9 +35,8 @@ async function run() {
     await client.connect();
     const usersCollection = client.db("mealmate").collection("users");
     const mealsCollection = client.db("mealmate").collection("meals");
-    const upcomingMealsCollection = client
-      .db("mealmate")
-      .collection("upcomingmeals");
+    const upcomingMealsCollection = client.db("mealmate").collection("upcomingmeals");
+    const reviewCollection = client.db("mealmate").collection("mealsreview");
 
     // root route
     app.get("/", (req, res) => {
@@ -117,7 +116,7 @@ async function run() {
       res.send(meals);
     });
 
-    //   upcoming meals
+
     // POST an upcoming meal
     app.post("/upcoming-meals", async (req, res) => {
       const mealData = req.body;
@@ -138,6 +137,83 @@ async function run() {
           .json({ success: false, message: "Failed to add upcoming meal." });
       }
     });
+
+
+    // GET all upcoming meals
+    app.get("/upcoming-meals", async (req, res) => {
+        try {
+            const upcomingMeals = await upcomingMealsCollection
+            .find({})
+            .sort({ date: -1 }) // Sort by date, newest first
+            .toArray();
+            res.send(upcomingMeals);
+        } catch (err) {
+            console.error(err);
+            res.status(500).send({ error: "Failed to fetch upcoming meals." });
+        }
+    })
+
+    // get upcoming all meals
+
+    // app.get("/upcoming-meals/all", async (req, res) => {
+    //     try {
+    //         const upcomingMeals = await upcomingMealsCollection // Sort by date, newest first
+    //         .toArray();
+    //         res.send(upcomingMeals);
+    //     } catch (err) {
+    //         console.error(err);
+    //         res.status(500).send({ error: "Failed to fetch upcoming meals." });
+    //     }
+    // })
+
+
+    // review posting
+    app.post("/reviews", async (req, res) => {
+        const { mealId, userId, displayName, email, image, text } = req.body;
+      
+        if (!mealId || !text) {
+          return res.status(400).json({ error: "mealId and text are required" });
+        }
+      
+        try {
+          const review = {
+            mealId: new ObjectId(mealId),
+            userId: userId ? new ObjectId(userId) : null,
+            displayName,
+            email,
+            image,
+            text,
+            date: new Date(),
+          };
+      
+          await reviewCollection.insertOne(review);
+      
+          // Increment reviews in mealsCollection first
+          const query = { _id: new ObjectId(mealId) };
+          let result = await mealsCollection.updateOne(query, { $inc: { reviews: 1 } });
+      
+          if (result.modifiedCount === 0) {
+            // If not found, try upcomingMealsCollection
+            await upcomingMealsCollection.updateOne(query, { $inc: { reviews: 1 } });
+          }
+      
+          res.send({ success: true });
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({ error: "Failed to add review" });
+        }
+      });
+      ``
+
+
+
+
+
+
+
+
+
+
 
     //   mealss by category
     // Get meals by category, limit 6
@@ -173,6 +249,41 @@ async function run() {
       }
       res.send({ success: true });
     });
+
+    // meal details
+    const { ObjectId } = require("mongodb");
+
+app.get("/meals/:id", async (req, res) => {
+  const id = req.params.id;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: "Invalid ID format" });
+  }
+
+  try {
+    const query = { _id: new ObjectId(id) };
+
+    // First, search in mealsCollection
+    let meal = await mealsCollection.findOne(query);
+
+    if (!meal) {
+      // If not found, search in upcomingMealsCollection
+      meal = await upcomingMealsCollection.findOne(query);
+    }
+
+    if (!meal) {
+      return res.status(404).json({ error: "Meal not found" });
+    }
+
+    res.send(meal);
+  } catch (err) {
+    console.error("Error fetching meal:", err);
+    res.status(500).json({ error: "Server error fetching meal" });
+  }
+});
+
+
+
 
     // Get recent 5 users
     app.get("/users/recent", async (req, res) => {
