@@ -347,6 +347,33 @@ async function run() {
         }
       });
 
+
+    // get all requests
+    app.get("/requested-meals", async (req, res) => {
+        try {
+          const allRequests = await requestsCollection.aggregate([
+            {
+              $addFields: {
+                statusOrder: {
+                  $cond: [
+                    { $eq: ["$status", "pending"] }, 1, // pending → 1
+                    { $eq: ["$status", "Served"] }, 2, // Served → 2
+                    3 // anything else → 3
+                  ]
+                }
+              }
+            },
+            { $sort: { statusOrder: 1, requestedAt: -1 } },
+            { $project: { statusOrder: 0 } } 
+          ]).toArray();
+      
+          res.send(allRequests);
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({ error: "Failed to fetch requested meals" });
+        }
+      });
+
     // meals like
     app.patch("/meals/:id/like", async (req, res) => {
       const id = req.params.id;
@@ -380,6 +407,33 @@ async function run() {
         res.status(500).json({ error: "Failed to toggle like" });
       }
     });
+
+    // handeling meal requests status
+    app.patch("/requested-meals/:id", async (req, res) => {
+        const { id } = req.params;
+        const { status } = req.body;
+      
+        // Allow "Served" now
+        if (!["approved", "rejected", "Served"].includes(status)) {
+          return res.status(400).json({ error: "Invalid status" });
+        }
+      
+        try {
+          const result = await requestsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: status } }
+          );
+      
+          if (result.modifiedCount === 0) {
+            return res.status(404).json({ error: "Request not found or status unchanged" });
+          }
+      
+          res.send({ success: true, status: status });
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({ error: "Failed to update request status" });
+        }
+      });
 
     // Get recent 5 users
     app.get("/users/recent", async (req, res) => {
