@@ -35,6 +35,9 @@ async function run() {
     await client.connect();
     const usersCollection = client.db("mealmate").collection("users");
     const mealsCollection = client.db("mealmate").collection("meals");
+    const upcomingMealsCollection = client
+      .db("mealmate")
+      .collection("upcomingmeals");
 
     // root route
     app.get("/", (req, res) => {
@@ -63,21 +66,21 @@ async function run() {
     //   meal post
 
     app.post("/meals", async (req, res) => {
-        const meal = req.body;
-      
-        if (meal.ingredients && typeof meal.ingredients === "string") {
-          meal.ingredients = meal.ingredients
-            .split(",")
-            .map((item) => item.trim())
-            .filter((item) => item !== "");
-        }
-      
-        const result = await mealsCollection.insertOne(meal);
-        res.send({
-          success: true,
-          insertedId: result.insertedId,
-        });
+      const meal = req.body;
+
+      if (meal.ingredients && typeof meal.ingredients === "string") {
+        meal.ingredients = meal.ingredients
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item !== "");
+      }
+
+      const result = await mealsCollection.insertOne(meal);
+      res.send({
+        success: true,
+        insertedId: result.insertedId,
       });
+    });
 
     app.get("/meals", async (req, res) => {
       const meals = await mealsCollection.find({}).toArray();
@@ -86,33 +89,79 @@ async function run() {
 
     // GET ONE meal by ID
     app.get("/meals", async (req, res) => {
-        const { search, category, minPrice, maxPrice } = req.query;
-      
-        const query = {};
-      
-        if (search) {
-          query.title = { $regex: search, $options: "i" }; // case-insensitive search by title
-        }
-      
-        if (category && category !== "All") {
-          query.category = category;
-        }
-      
-        if (minPrice) {
-          query.price = { ...query.price, $gte: Number(minPrice) };
-        }
-      
-        if (maxPrice) {
-          query.price = { ...query.price, $lte: Number(maxPrice) };
-        }
-      
+      const { search, category, minPrice, maxPrice } = req.query;
+
+      const query = {};
+
+      if (search) {
+        query.title = { $regex: search, $options: "i" }; // partial, case-insensitive
+      }
+
+      if (category && category !== "All") {
+        query.category = category.toLowerCase(); // force match lowercase
+      }
+
+      if (minPrice) {
+        query.price = { ...query.price, $gte: Number(minPrice) };
+      }
+
+      if (maxPrice) {
+        query.price = { ...query.price, $lte: Number(maxPrice) };
+      }
+
+      const meals = await mealsCollection
+        .find(query)
+        .sort({ date: -1 }) // newest first
+        .toArray();
+
+      res.send(meals);
+    });
+
+    //   upcoming meals
+    // POST an upcoming meal
+    app.post("/upcoming-meals", async (req, res) => {
+      const mealData = req.body;
+
+      if (!mealData.title || !mealData.category || !mealData.price) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Missing required fields." });
+      }
+
+      try {
+        const result = await upcomingMealsCollection.insertOne(mealData);
+        res.json({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to add upcoming meal." });
+      }
+    });
+
+    //   mealss by category
+    // Get meals by category, limit 6
+    app.get("/meals-by-category", async (req, res) => {
+      const { category } = req.query;
+
+      const query = {};
+      if (category && category !== "All") {
+        query.category = category.toLowerCase(); // Match lowercase
+      }
+
+      try {
         const meals = await mealsCollection
           .find(query)
-          .sort({ date: -1 })
+          .sort({ date: -1 }) // recent first
+          .limit(6)
           .toArray();
-      
+
         res.send(meals);
-      });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch meals by category." });
+      }
+    });
 
     // meal delete
     app.delete("/meals/:id", async (req, res) => {
@@ -126,61 +175,50 @@ async function run() {
     });
 
     // Get recent 5 users
-app.get("/users/recent", async (req, res) => {
-    const users = await usersCollection.find({}).sort({ _id: -1 }).limit(5).toArray();
-    res.send(users);
-  });
-  
-  // Search user by email
-  app.get("/users/search", async (req, res) => {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
-    const user = await usersCollection.findOne({ email: email });
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.send([user]); // send as array for consistency
-  });
-  
-  // Update user role
-  app.patch("/users/:id/role", async (req, res) => {
-    const { id } = req.params;
-    const { role } = req.body;
-  
-    if (!["admin", "user"].includes(role)) {
-      return res.status(400).json({ error: "Invalid role" });
-    }
-  
-    const result = await usersCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { role: role } }
-    );
-  
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ error: "User not found or role unchanged" });
-    }
-  
-    res.send({ success: true });
-  });
+    app.get("/users/recent", async (req, res) => {
+      const users = await usersCollection
+        .find({})
+        .sort({ _id: -1 })
+        .limit(5)
+        .toArray();
+      res.send(users);
+    });
 
+    // Search user by email
+    app.get("/users/search", async (req, res) => {
+      const { email } = req.query;
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+      const user = await usersCollection.findOne({ email: email });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.send([user]); // send as array for consistency
+    });
 
+    // Update user role
+    app.patch("/users/:id/role", async (req, res) => {
+      const { id } = req.params;
+      const { role } = req.body;
 
+      if (!["admin", "user"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
 
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { role: role } }
+      );
 
+      if (result.modifiedCount === 0) {
+        return res
+          .status(404)
+          .json({ error: "User not found or role unchanged" });
+      }
 
-
-
-
-
-
-
-
-
-
-
-
+      res.send({ success: true });
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
