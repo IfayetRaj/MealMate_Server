@@ -148,33 +148,46 @@ async function run() {
 
     // publishsing upcoming meals
     app.post("/upcoming-meals/:id", async (req, res) => {
-      const id = req.params.id;
-
-      if (!ObjectId.isValid(id)) {
-        return res.status(400).json({ error: "Invalid meal ID" });
-      }
-
-      try {
-        const meal = await upcomingMealsCollection.findOne({
-          _id: new ObjectId(id),
-        });
-
-        if (!meal) {
-          return res.status(404).json({ error: "Upcoming meal not found" });
+        const id = req.params.id;
+      
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ error: "Invalid meal ID" });
         }
+      
+        try {
 
-        // Insert into mealsCollection
-        const result = await mealsCollection.insertOne(meal);
-
-        // Remove from upcomingMealsCollection
-        await upcomingMealsCollection.deleteOne({ _id: new ObjectId(id) });
-
-        res.json({ success: true, insertedId: result.insertedId });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to publish upcoming meal" });
-      }
-    });
+          const meal = await upcomingMealsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+      
+          if (!meal) {
+            return res.status(404).json({ error: "Upcoming meal not found" });
+          }
+      
+          const updatedMeal = {
+            ...meal,
+            status: "ongoing",
+          };
+      
+          // Optional: remove the _id
+          delete updatedMeal._id;
+      
+          // 3️⃣ Insert into mealsCollection
+          const result = await mealsCollection.insertOne(updatedMeal);
+      
+          // 4️⃣ Remove from upcomingMealsCollection
+          await upcomingMealsCollection.deleteOne({ _id: new ObjectId(id) });
+      
+          res.json({
+            success: true,
+            insertedId: result.insertedId,
+            message: "Meal published successfully.",
+          });
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({ error: "Failed to publish upcoming meal" });
+        }
+      });
 
     // updating meals
     app.put("/meals/:id", async (req, res) => {
@@ -198,12 +211,10 @@ async function run() {
         );
 
         if (result.modifiedCount === 0) {
-          return res
-            .status(404)
-            .json({
-              success: false,
-              message: "Meal not found or not updated.",
-            });
+          return res.status(404).json({
+            success: false,
+            message: "Meal not found or not updated.",
+          });
         }
 
         res.json({ success: true, message: "Meal updated successfully." });
@@ -423,30 +434,30 @@ async function run() {
         res.status(500).json({ error: "Failed to fetch meals by category." });
       }
     });
-// meal found by search
-// Search meal by title
-app.get("/meals/search", async (req, res) => {
-    const { title } = req.query;
-  
-    if (!title) {
-      return res.status(400).json({ error: "Title query is required" });
-    }
-  
-    try {
-      const meal = await mealsCollection.findOne({
-        title: { $regex: new RegExp(`^${title}$`, "i") },
-      });
-  
-      if (!meal) {
-        return res.status(404).json({ error: "Meal not found" });
+
+    // Search meal by title
+    app.get("/meals/search", async (req, res) => {
+      const { title } = req.query;
+
+      if (!title) {
+        return res.status(400).json({ error: "Title query is required" });
       }
-  
-      res.send(meal);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to search meal" });
-    }
-  });
+
+      try {
+        const meal = await mealsCollection.findOne({
+          title: { $regex: new RegExp(`^${title}$`, "i") },
+        });
+
+        if (!meal) {
+          return res.status(404).json({ error: "Meal not found" });
+        }
+
+        res.send(meal);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to search meal" });
+      }
+    });
     // meal delete
     app.delete("/meals/:id", async (req, res) => {
       const id = req.params.id;
@@ -657,28 +668,34 @@ app.get("/meals/search", async (req, res) => {
       }
     });
 
-    // Get recent 5 users
-    app.get("/users/recent", async (req, res) => {
-      const users = await usersCollection
-        .find({})
-        .sort({ _id: -1 })
-        .limit(5)
-        .toArray();
-      res.send(users);
-    });
+    // Get recent  users
+    app.get("/users/recent/:email", async (req, res) => {
+        const currentEmail = req.params.email;
+      
+        try {
+          const users = await usersCollection
+            .find({ email: { $ne: currentEmail } }) // $ne => not equal
+            .toArray();
+      
+          res.send(users);
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({ error: "Failed to fetch users" });
+        }
+      });
 
     // Search user by email
     app.get("/users/search", async (req, res) => {
-      const { email } = req.query;
-      if (!email) {
-        return res.status(400).json({ error: "Email is required" });
-      }
-      const user = await usersCollection.findOne({ email: email });
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
-      }
-      res.send([user]); // send as array for consistency
-    });
+        const { email } = req.query;
+        if (!email) {
+          return res.status(400).json({ error: "Email is required" });
+        }
+        const user = await usersCollection.findOne({ email: email });
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+        res.send([user]); // send as array for consistency
+      });
 
     // Update user role
     app.patch("/users/:id/role", async (req, res) => {
