@@ -128,6 +128,13 @@ async function run() {
           .json({ success: false, message: "Missing required fields." });
       }
 
+      if (mealData.ingredients && typeof mealData.ingredients === "string") {
+        mealData.ingredients = mealData.ingredients
+          .split(",")
+          .map((item) => item.trim()) // remove extra spaces
+          .filter((item) => item.length > 0); // remove empty strings if any
+      }
+
       try {
         const result = await upcomingMealsCollection.insertOne(mealData);
         res.json({ success: true, insertedId: result.insertedId });
@@ -136,6 +143,75 @@ async function run() {
         res
           .status(500)
           .json({ success: false, message: "Failed to add upcoming meal." });
+      }
+    });
+
+    // publishsing upcoming meals
+    app.post("/upcoming-meals/:id", async (req, res) => {
+      const id = req.params.id;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid meal ID" });
+      }
+
+      try {
+        const meal = await upcomingMealsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!meal) {
+          return res.status(404).json({ error: "Upcoming meal not found" });
+        }
+
+        // Insert into mealsCollection
+        const result = await mealsCollection.insertOne(meal);
+
+        // Remove from upcomingMealsCollection
+        await upcomingMealsCollection.deleteOne({ _id: new ObjectId(id) });
+
+        res.json({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to publish upcoming meal" });
+      }
+    });
+
+    // updating meals
+    app.put("/meals/:id", async (req, res) => {
+      const id = req.params.id;
+      const updatedMeal = req.body;
+
+      if (
+        updatedMeal.ingredients &&
+        typeof updatedMeal.ingredients === "string"
+      ) {
+        updatedMeal.ingredients = updatedMeal.ingredients
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0);
+      }
+
+      try {
+        const result = await mealsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedMeal }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({
+              success: false,
+              message: "Meal not found or not updated.",
+            });
+        }
+
+        res.json({ success: true, message: "Meal updated successfully." });
+      } catch (err) {
+        console.error(err);
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to update meal." });
       }
     });
 
@@ -155,7 +231,17 @@ async function run() {
 
     // review posting
     app.post("/reviews", async (req, res) => {
-      const { mealId, userId, displayName, email, image, text } = req.body;
+      const {
+        mealId,
+        userId,
+        displayName,
+        email,
+        image,
+        text,
+        reviews,
+        likes,
+        title,
+      } = req.body;
 
       if (!mealId || !text) {
         return res.status(400).json({ error: "mealId and text are required" });
@@ -167,6 +253,9 @@ async function run() {
           userId: userId ? new ObjectId(userId) : null,
           displayName,
           email,
+          reviews,
+          likes,
+          title,
           image,
           text,
           date: new Date(),
@@ -191,6 +280,70 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to add review" });
+      }
+    });
+    // get all data from reviews
+    app.get("/reviews", async (req, res) => {
+      try {
+        const reviews = await reviewCollection.find().toArray();
+        res.send(reviews);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch reviews." });
+      }
+    });
+
+    // getting requests based on user email
+    app.get("/requests/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const query = { userEmail: email };
+        const requests = await requestsCollection.find(query).toArray();
+        res.send(requests);
+      } catch (err) {
+        console.error("Error in /requests/:email:", err);
+        res.status(500).send({ error: "Failed to fetch requests." });
+      }
+    });
+
+    // getting reviews by user email
+    app.get("/reviews/user/:email", async (req, res) => {
+      const email = req.params.email;
+
+      try {
+        const reviews = await reviewCollection
+          .find({ email: email })
+          // .sort({ date: -1 })
+          .toArray();
+
+        res.send(reviews);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch user reviews" });
+      }
+    });
+
+    // delete review by user email
+    app.delete("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid review ID" });
+      }
+
+      try {
+        const result = await reviewCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: "Review not found" });
+        }
+
+        res.send({ success: true, message: "Review deleted successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to delete review" });
       }
     });
 
@@ -245,38 +398,85 @@ async function run() {
       }
     });
 
-    // Get meals by category, limit 6 --------------------------------jhamela ache
+    // Get meals by category, limit 6 ----------------------------||||||||||||||||||||||||----jhamela ache
+
     app.get("/meals-by-category", async (req, res) => {
       const { category } = req.query;
 
-      const query = {};
+      let query = {};
+
       if (category && category !== "All") {
-        query.category = category.toLowerCase(); // Match lowercase
+        // Case-insensitive match using regex
+        query.category = { $regex: new RegExp(`^${category}$`, "i") };
       }
 
       try {
         const meals = await mealsCollection
           .find(query)
-          .sort({ date: -1 }) // recent first
-          .limit(6)
+          .sort({ date: -1 }) // Sort by date descending
+          .limit(3) // ✅ Only 3 meals
           .toArray();
 
         res.send(meals);
       } catch (err) {
         console.error(err);
-        res.status(500).send({ error: "Failed to fetch meals by category." });
+        res.status(500).json({ error: "Failed to fetch meals by category." });
       }
     });
-
+// meal found by search
+// Search meal by title
+app.get("/meals/search", async (req, res) => {
+    const { title } = req.query;
+  
+    if (!title) {
+      return res.status(400).json({ error: "Title query is required" });
+    }
+  
+    try {
+      const meal = await mealsCollection.findOne({
+        title: { $regex: new RegExp(`^${title}$`, "i") },
+      });
+  
+      if (!meal) {
+        return res.status(404).json({ error: "Meal not found" });
+      }
+  
+      res.send(meal);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to search meal" });
+    }
+  });
     // meal delete
     app.delete("/meals/:id", async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await mealsCollection.deleteOne(query);
-      if (result.deletedCount === 0) {
-        return res.status(404).json({ error: "Meal not found" });
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid meal ID" });
       }
-      res.send({ success: true });
+
+      const mealQuery = { _id: new ObjectId(id) };
+
+      try {
+        // Delete the meal
+        const mealResult = await mealsCollection.deleteOne(mealQuery);
+
+        if (mealResult.deletedCount === 0) {
+          return res.status(404).json({ error: "Meal not found" });
+        }
+
+        // Delete related reviews
+        const reviewQuery = { mealId: new ObjectId(id) }; // Assuming your reviews store mealId as a string
+        const reviewsResult = await reviewCollection.deleteMany(reviewQuery);
+
+        res.send({
+          success: true,
+          message: `Meal deleted successfully. Also deleted ${reviewsResult.deletedCount} related reviews.`,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to delete meal and reviews" });
+      }
     });
 
     // meal details page
@@ -311,68 +511,88 @@ async function run() {
 
     // Create request--------------------kaj sesh
     app.post("/request-meal", async (req, res) => {
-        console.log("Request received:", req.body);
-        const { userName, userEmail, mealId, mealTitle, mealLikes, mealPrice, status } = req.body;
-      
-        if (!userEmail || !mealId) {
-          return res.status(400).send({ success: false, error: "Missing userEmail or mealId" });
-        }
-      
-        try {
-          const query = { userEmail: userEmail, mealId: mealId };
-          const existingRequest = await requestsCollection.findOne(query);
-      
-          if (existingRequest) {
-            return res.send({ success: false, message: "Already requested." });
-          }
-      
-          // Not found → insert new request
-          const newRequest = {
-            userName,
-            userEmail,
-            mealId,
-            mealTitle,
-            mealLikes,
-            mealPrice,
-            status: status || "pending",
-            requestedAt: new Date(),
-          };
-      
-          await requestsCollection.insertOne(newRequest);
-      
-          return res.send({ success: true, message: "Request created." });
-        } catch (error) {
-          console.error(error);
-          return res.status(500).send({ success: false, error: "Server error" });
-        }
-      });
+      console.log("Request received:", req.body);
+      const {
+        userName,
+        userEmail,
+        mealId,
+        mealTitle,
+        mealLikes,
+        mealPrice,
+        status,
+      } = req.body;
 
+      if (!userEmail || !mealId) {
+        return res
+          .status(400)
+          .send({ success: false, error: "Missing userEmail or mealId" });
+      }
+
+      try {
+        const query = { userEmail: userEmail, mealId: mealId };
+        const existingRequest = await requestsCollection.findOne(query);
+
+        if (existingRequest) {
+          return res.send({ success: false, message: "Already requested." });
+        }
+
+        // Not found → insert new request
+        const newRequest = {
+          userName,
+          userEmail,
+          mealId,
+          mealTitle,
+          mealLikes,
+          mealPrice,
+          status: status || "pending",
+          requestedAt: new Date(),
+        };
+
+        await requestsCollection.insertOne(newRequest);
+
+        return res.send({ success: true, message: "Request created." });
+      } catch (error) {
+        console.error(error);
+        return res.status(500).send({ success: false, error: "Server error" });
+      }
+    });
 
     // get all requests
     app.get("/requested-meals", async (req, res) => {
-        try {
-          const allRequests = await requestsCollection.aggregate([
+      try {
+        const allRequests = await requestsCollection
+          .aggregate([
             {
               $addFields: {
                 statusOrder: {
-                  $cond: [
-                    { $eq: ["$status", "pending"] }, 1, // pending → 1
-                    { $eq: ["$status", "Served"] }, 2, // Served → 2
-                    3 // anything else → 3
-                  ]
-                }
-              }
+                  $switch: {
+                    branches: [
+                      {
+                        case: { $eq: [{ $toLower: "$status" }, "pending"] },
+                        then: 1,
+                      },
+                      {
+                        case: { $eq: [{ $toLower: "$status" }, "served"] },
+                        then: 2,
+                      },
+                    ],
+                    default: 3,
+                  },
+                },
+              },
             },
             { $sort: { statusOrder: 1, requestedAt: -1 } },
-            { $project: { statusOrder: 0 } } 
-          ]).toArray();
-      
-          res.send(allRequests);
-        } catch (error) {
-          console.error(error);
-          res.status(500).send({ error: "Failed to fetch requested meals" });
-        }
-      });
+            { $project: { statusOrder: 0 } },
+          ])
+          .toArray();
+
+        console.log("Sorted requests:", allRequests);
+        res.send(allRequests);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: "Failed to fetch requested meals" });
+      }
+    });
 
     // meals like
     app.patch("/meals/:id/like", async (req, res) => {
@@ -410,30 +630,32 @@ async function run() {
 
     // handeling meal requests status
     app.patch("/requested-meals/:id", async (req, res) => {
-        const { id } = req.params;
-        const { status } = req.body;
-      
-        // Allow "Served" now
-        if (!["approved", "rejected", "Served"].includes(status)) {
-          return res.status(400).json({ error: "Invalid status" });
+      const { id } = req.params;
+      const { status } = req.body;
+
+      // Allow "Served" now
+      if (!["approved", "rejected", "Served"].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      try {
+        const result = await requestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: status } }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({ error: "Request not found or status unchanged" });
         }
-      
-        try {
-          const result = await requestsCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { status: status } }
-          );
-      
-          if (result.modifiedCount === 0) {
-            return res.status(404).json({ error: "Request not found or status unchanged" });
-          }
-      
-          res.send({ success: true, status: status });
-        } catch (err) {
-          console.error(err);
-          res.status(500).json({ error: "Failed to update request status" });
-        }
-      });
+
+        res.send({ success: true, status: status });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update request status" });
+      }
+    });
 
     // Get recent 5 users
     app.get("/users/recent", async (req, res) => {
