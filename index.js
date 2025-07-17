@@ -1,11 +1,16 @@
-//setup a node js file
 const express = require("express");
+// import express from "express";
 const app = express();
+// const dotenv = require("dotenv");
 const port = process.env.PORT || 3000;
-const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+// import Stripe from "stripe";
+require("dotenv").config();
+const Stripe = require("stripe");
+const stripe = new Stripe(process.env.PAYMENT_GETWAY_KEY);
 
 // Middleware
+const cors = require("cors");
 app.use(
   cors({
     origin: "http://localhost:5173",
@@ -48,6 +53,10 @@ async function run() {
     // post users
     app.post("/users", async (req, res) => {
       const user = req.body;
+      const existing = await usersCollection.findOne({ email: user.email });
+      if (existing) {
+        return res.json({ success: false, message: "User already exists" });
+      }
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
@@ -82,55 +91,56 @@ async function run() {
       });
     });
 
-    // get all meals
-    // app.get("/meals", async (req, res) => {
-    //   const meals = await mealsCollection.find({}).toArray();
-    //   res.send(meals);
-    // });
+    // getting all meal data
+    app.get("/meals", async (req, res) => {
+      const {
+        search,
+        category,
+        sortBy = "date",
+        sortOrder = "desc",
+      } = req.query;
 
+      const query = {};
 
-// getting all meal data
-app.get("/meals", async (req, res) => {
-    const { search, category, sortBy = "date", sortOrder = "desc" } = req.query;
-  
-    const query = {};
-  
-    if (search) {
-      query.title = { $regex: search, $options: "i" }; // partial case-insensitive match
-    }
-  
-    if (category && category !== "All") {
-      query.category = category.toLowerCase(); // filter by category
-    }
-  
-    let sortOptions = {};
-    if (sortBy === "price") {
-      sortOptions.price = sortOrder === "asc" ? 1 : -1;
-    } else if (sortBy === "category") {
-      sortOptions.category = sortOrder === "asc" ? 1 : -1;
-    } else {
-      sortOptions.date = sortOrder === "asc" ? 1 : -1; // default to date
-    }
-  
-    const meals = await mealsCollection.find(query).sort(sortOptions).toArray();
-    res.send(meals);
-  });
+      if (search) {
+        query.title = { $regex: search, $options: "i" }; // partial case-insensitive match
+      }
 
-   // ✅ Dedicated category route with limit
-   app.get("/meals-by-category", async (req, res) => {
-    const { category, limit = 6 } = req.query;
-    if (!category) return res.status(400).json({ error: "Category required" });
+      if (category && category !== "All") {
+        query.category = category.toLowerCase(); // filter by category
+      }
 
-    const query = { category: { $regex: new RegExp(`^${category}$`, "i") } };
-    const meals = await mealsCollection
-      .find(query)
-      .sort({ date: -1 })
-      .limit(parseInt(limit))
-      .toArray();
+      let sortOptions = {};
+      if (sortBy === "price") {
+        sortOptions.price = sortOrder === "asc" ? 1 : -1;
+      } else if (sortBy === "category") {
+        sortOptions.category = sortOrder === "asc" ? 1 : -1;
+      } else {
+        sortOptions.date = sortOrder === "asc" ? 1 : -1; // default to date
+      }
 
-    res.send(meals);
-  });
+      const meals = await mealsCollection
+        .find(query)
+        .sort(sortOptions)
+        .toArray();
+      res.send(meals);
+    });
 
+    // ✅ Dedicated category route with limit
+    app.get("/meals-by-category", async (req, res) => {
+      const { category, limit = 6 } = req.query;
+      if (!category)
+        return res.status(400).json({ error: "Category required" });
+
+      const query = { category: { $regex: new RegExp(`^${category}$`, "i") } };
+      const meals = await mealsCollection
+        .find(query)
+        .sort({ date: -1 })
+        .limit(parseInt(limit))
+        .toArray();
+
+      res.send(meals);
+    });
 
     // POST an upcoming meal
     app.post("/upcoming-meals", async (req, res) => {
@@ -162,46 +172,45 @@ app.get("/meals", async (req, res) => {
 
     // publishsing upcoming meals
     app.post("/upcoming-meals/:id", async (req, res) => {
-        const id = req.params.id;
-      
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ error: "Invalid meal ID" });
-        }
-      
-        try {
+      const id = req.params.id;
 
-          const meal = await upcomingMealsCollection.findOne({
-            _id: new ObjectId(id),
-          });
-      
-          if (!meal) {
-            return res.status(404).json({ error: "Upcoming meal not found" });
-          }
-      
-          const updatedMeal = {
-            ...meal,
-            status: "ongoing",
-          };
-      
-          // Optional: remove the _id
-          delete updatedMeal._id;
-      
-          // 3️⃣ Insert into mealsCollection
-          const result = await mealsCollection.insertOne(updatedMeal);
-      
-          // 4️⃣ Remove from upcomingMealsCollection
-          await upcomingMealsCollection.deleteOne({ _id: new ObjectId(id) });
-      
-          res.json({
-            success: true,
-            insertedId: result.insertedId,
-            message: "Meal published successfully.",
-          });
-        } catch (err) {
-          console.error(err);
-          res.status(500).json({ error: "Failed to publish upcoming meal" });
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid meal ID" });
+      }
+
+      try {
+        const meal = await upcomingMealsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!meal) {
+          return res.status(404).json({ error: "Upcoming meal not found" });
         }
-      });
+
+        const updatedMeal = {
+          ...meal,
+          status: "ongoing",
+        };
+
+        // Optional: remove the _id
+        delete updatedMeal._id;
+
+        // 3️⃣ Insert into mealsCollection
+        const result = await mealsCollection.insertOne(updatedMeal);
+
+        // 4️⃣ Remove from upcomingMealsCollection
+        await upcomingMealsCollection.deleteOne({ _id: new ObjectId(id) });
+
+        res.json({
+          success: true,
+          insertedId: result.insertedId,
+          message: "Meal published successfully.",
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to publish upcoming meal" });
+      }
+    });
 
     // updating meals
     app.put("/meals/:id", async (req, res) => {
@@ -372,6 +381,30 @@ app.get("/meals", async (req, res) => {
       }
     });
 
+    // deleting request
+    app.delete("/requests/:id", async (req, res) => {
+      const id = req.params.id;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid request ID" });
+      }
+
+      try {
+        const result = await requestsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: "Request not found" });
+        }
+
+        res.send({ success: true, message: "Request deleted successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to delete request" });
+      }
+    });
+
     //   get reviews by meal ID
     app.get("/reviews/:mealId", async (req, res) => {
       const mealId = req.params.mealId;
@@ -391,69 +424,74 @@ app.get("/meals", async (req, res) => {
 
     // likes by meal id
     app.patch("/meals/:id/like", async (req, res) => {
-        const id = req.params.id;
+      const id = req.params.id;
 
-      
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ error: "Invalid ID" });
-        }
-      
-        const { action } = req.body;
-        if (!["like", "dislike"].includes(action)) {
-          return res.status(400).json({ error: "Invalid action" });
-        }
-      
-        const inc = action === "like" ? 1 : -1;
-        const query = { _id: new ObjectId(id) };
-      
-        let released = false;
-      
-        try {
-          // Try update in meals collection first
-          const result = await mealsCollection.updateOne(query, { $inc: { likes: inc } });
-      
-          if (result.matchedCount === 0) {
-            // Not found in meals, try upcoming meals
-            const updateResult = await upcomingMealsCollection.findOneAndUpdate(
-              query,
-              { $inc: { likes: inc } },
-              { returnDocument: "after" }
-            );
-            console.log(updateResult);
-            if (!updateResult) {
-              return res.status(404).json({ error: "Meal not found in either collection" });
-            }
-      
-            const updatedMeal = updateResult;
-      
-            // Check if likes hit threshold and status not yet ongoing
-            if (updatedMeal.likes >= 10 && updatedMeal.status !== "ongoing") {
-              // Update status in upcoming collection
-              await upcomingMealsCollection.updateOne(query, { $set: { status: "ongoing" } });
-      
-              // Fetch updated doc again (or reuse updatedMeal and just patch status)
-              const ongoingMeal = await upcomingMealsCollection.findOne(query);
-      
-              if (ongoingMeal) {
-                const { _id, ...mealData } = ongoingMeal; // remove _id to avoid duplicate key error
-      
-                // Insert into main meals collection
-                await mealsCollection.insertOne(mealData);
-      
-                // Remove from upcoming meals collection
-                await upcomingMealsCollection.deleteOne(query);
-      
-                released = true; // mark that meal was published
-              }
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid ID" });
+      }
+
+      const { action } = req.body;
+      if (!["like", "dislike"].includes(action)) {
+        return res.status(400).json({ error: "Invalid action" });
+      }
+
+      const inc = action === "like" ? 1 : -1;
+      const query = { _id: new ObjectId(id) };
+
+      let released = false;
+
+      try {
+        // Try update in meals collection first
+        const result = await mealsCollection.updateOne(query, {
+          $inc: { likes: inc },
+        });
+
+        if (result.matchedCount === 0) {
+          // Not found in meals, try upcoming meals
+          const updateResult = await upcomingMealsCollection.findOneAndUpdate(
+            query,
+            { $inc: { likes: inc } },
+            { returnDocument: "after" }
+          );
+          console.log(updateResult);
+          if (!updateResult) {
+            return res
+              .status(404)
+              .json({ error: "Meal not found in either collection" });
+          }
+
+          const updatedMeal = updateResult;
+
+          // Check if likes hit threshold and status not yet ongoing
+          if (updatedMeal.likes >= 10 && updatedMeal.status !== "ongoing") {
+            // Update status in upcoming collection
+            await upcomingMealsCollection.updateOne(query, {
+              $set: { status: "ongoing" },
+            });
+
+            // Fetch updated doc again (or reuse updatedMeal and just patch status)
+            const ongoingMeal = await upcomingMealsCollection.findOne(query);
+
+            if (ongoingMeal) {
+              const { _id, ...mealData } = ongoingMeal; // remove _id to avoid duplicate key error
+
+              // Insert into main meals collection
+              await mealsCollection.insertOne(mealData);
+
+              // Remove from upcoming meals collection
+              await upcomingMealsCollection.deleteOne(query);
+
+              released = true; // mark that meal was published
             }
           }
-      
-          return res.json({ success: true, action, released });
-        } catch (error) {
-          console.error("Error in PATCH /meals/:id/like:", error);
-          return res.status(500).json({ error: "Failed to toggle like" });
         }
-      });
+
+        return res.json({ success: true, action, released });
+      } catch (error) {
+        console.error("Error in PATCH /meals/:id/like:", error);
+        return res.status(500).json({ error: "Failed to toggle like" });
+      }
+    });
 
     // Get meals by category, limit 6 ----------------------------||||||||||||||||||||||||----jhamela ache
 
@@ -716,32 +754,32 @@ app.get("/meals", async (req, res) => {
 
     // Get recent  users
     app.get("/users/recent/:email", async (req, res) => {
-        const currentEmail = req.params.email;
-      
-        try {
-          const users = await usersCollection
-            .find({ email: { $ne: currentEmail } }) // $ne => not equal
-            .toArray();
-      
-          res.send(users);
-        } catch (err) {
-          console.error(err);
-          res.status(500).json({ error: "Failed to fetch users" });
-        }
-      });
+      const currentEmail = req.params.email;
+
+      try {
+        const users = await usersCollection
+          .find({ email: { $ne: currentEmail } }) // $ne => not equal
+          .toArray();
+
+        res.send(users);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch users" });
+      }
+    });
 
     // Search user by email
     app.get("/users/search", async (req, res) => {
-        const { email } = req.query;
-        if (!email) {
-          return res.status(400).json({ error: "Email is required" });
-        }
-        const user = await usersCollection.findOne({ email: email });
-        if (!user) {
-          return res.status(404).json({ error: "User not found" });
-        }
-        res.send([user]); // send as array for consistency
-      });
+      const { email } = req.query;
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+      const user = await usersCollection.findOne({ email: email });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.send([user]); // send as array for consistency
+    });
 
     // Update user role
     app.patch("/users/:id/role", async (req, res) => {
@@ -765,6 +803,81 @@ app.get("/meals", async (req, res) => {
 
       res.send({ success: true });
     });
+
+    // Create payment intent
+    app.post("/create-payment-intent", async (req, res) => {
+      try {
+        const { amount, planName, userEmail } = req.body;
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+    const paymentCollection = client
+      .db("mealmate")
+      .collection("paymentHistory");
+    // Confirm payment & update badge (optional but secure)
+    app.post("/confirm-payment", async (req, res) => {
+      try {
+        const { userEmail, planName, amount, transactionId } = req.body;
+
+        const result = await usersCollection.updateOne(
+          { email: userEmail },
+          { $set: { badge: planName } }
+        );
+
+
+        const paymentHistory = {
+          userEmail,
+          planName,
+          amount,
+          transactionId,
+          status: "complete",
+          date: new Date(),
+        };
+
+        const paymentResult = await paymentCollection.insertOne(paymentHistory);
+
+        res.send({
+          success: true,
+          badgeUpdate: result,
+          paymentRecord: paymentResult,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    //   payment history by email
+    app.get("/payments/:email", async (req, res) => {
+        const email = req.params.email;
+      
+        try {
+          const history = await paymentCollection.find({ userEmail: email }).toArray();
+      
+          if (history.length === 0) {
+            return res
+              .status(404)
+              .json({ error: "No payment history found for this user" });
+          }
+      
+          res.send(history);
+        } catch (err) {
+          console.error(err);
+          res.status(500).json({ error: "Failed to fetch payment history" });
+        }
+      });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
