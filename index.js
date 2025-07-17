@@ -83,40 +83,54 @@ async function run() {
     });
 
     // get all meals
-    app.get("/meals", async (req, res) => {
-      const meals = await mealsCollection.find({}).toArray();
-      res.send(meals);
-    });
+    // app.get("/meals", async (req, res) => {
+    //   const meals = await mealsCollection.find({}).toArray();
+    //   res.send(meals);
+    // });
 
-    // GET ONE meal by ID----------------------problem ache
-    app.get("/meals", async (req, res) => {
-      const { search, category, minPrice, maxPrice } = req.query;
 
-      const query = {};
+// getting all meal data
+app.get("/meals", async (req, res) => {
+    const { search, category, sortBy = "date", sortOrder = "desc" } = req.query;
+  
+    const query = {};
+  
+    if (search) {
+      query.title = { $regex: search, $options: "i" }; // partial case-insensitive match
+    }
+  
+    if (category && category !== "All") {
+      query.category = category.toLowerCase(); // filter by category
+    }
+  
+    let sortOptions = {};
+    if (sortBy === "price") {
+      sortOptions.price = sortOrder === "asc" ? 1 : -1;
+    } else if (sortBy === "category") {
+      sortOptions.category = sortOrder === "asc" ? 1 : -1;
+    } else {
+      sortOptions.date = sortOrder === "asc" ? 1 : -1; // default to date
+    }
+  
+    const meals = await mealsCollection.find(query).sort(sortOptions).toArray();
+    res.send(meals);
+  });
 
-      if (search) {
-        query.title = { $regex: search, $options: "i" }; // partial, case-insensitive
-      }
+   // ✅ Dedicated category route with limit
+   app.get("/meals-by-category", async (req, res) => {
+    const { category, limit = 6 } = req.query;
+    if (!category) return res.status(400).json({ error: "Category required" });
 
-      if (category && category !== "All") {
-        query.category = category.toLowerCase(); // force match lowercase
-      }
+    const query = { category: { $regex: new RegExp(`^${category}$`, "i") } };
+    const meals = await mealsCollection
+      .find(query)
+      .sort({ date: -1 })
+      .limit(parseInt(limit))
+      .toArray();
 
-      if (minPrice) {
-        query.price = { ...query.price, $gte: Number(minPrice) };
-      }
+    res.send(meals);
+  });
 
-      if (maxPrice) {
-        query.price = { ...query.price, $lte: Number(maxPrice) };
-      }
-
-      const meals = await mealsCollection
-        .find(query)
-        .sort({ date: -1 }) // newest first
-        .toArray();
-
-      res.send(meals);
-    });
 
     // POST an upcoming meal
     app.post("/upcoming-meals", async (req, res) => {
@@ -377,37 +391,69 @@ async function run() {
 
     // likes by meal id
     app.patch("/meals/:id/like", async (req, res) => {
-      const id = req.params.id;
-      const { action } = req.body; // action: "like" or "dislike"
+        const id = req.params.id;
 
-      if (!ObjectId.isValid(id)) {
-        return res.status(400).json({ error: "Invalid ID" });
-      }
-
-      if (!["like", "dislike"].includes(action)) {
-        return res.status(400).json({ error: "Invalid action" });
-      }
-
-      const query = { _id: new ObjectId(id) };
-      const inc = action === "like" ? 1 : -1;
-
-      try {
-        let result = await mealsCollection.updateOne(query, {
-          $inc: { likes: inc },
-        });
-
-        if (result.modifiedCount === 0) {
-          await upcomingMealsCollection.updateOne(query, {
-            $inc: { likes: inc },
-          });
+      
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ error: "Invalid ID" });
         }
-
-        res.send({ success: true, action });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to toggle like" });
-      }
-    });
+      
+        const { action } = req.body;
+        if (!["like", "dislike"].includes(action)) {
+          return res.status(400).json({ error: "Invalid action" });
+        }
+      
+        const inc = action === "like" ? 1 : -1;
+        const query = { _id: new ObjectId(id) };
+      
+        let released = false;
+      
+        try {
+          // Try update in meals collection first
+          const result = await mealsCollection.updateOne(query, { $inc: { likes: inc } });
+      
+          if (result.matchedCount === 0) {
+            // Not found in meals, try upcoming meals
+            const updateResult = await upcomingMealsCollection.findOneAndUpdate(
+              query,
+              { $inc: { likes: inc } },
+              { returnDocument: "after" }
+            );
+            console.log(updateResult);
+            if (!updateResult) {
+              return res.status(404).json({ error: "Meal not found in either collection" });
+            }
+      
+            const updatedMeal = updateResult;
+      
+            // Check if likes hit threshold and status not yet ongoing
+            if (updatedMeal.likes >= 10 && updatedMeal.status !== "ongoing") {
+              // Update status in upcoming collection
+              await upcomingMealsCollection.updateOne(query, { $set: { status: "ongoing" } });
+      
+              // Fetch updated doc again (or reuse updatedMeal and just patch status)
+              const ongoingMeal = await upcomingMealsCollection.findOne(query);
+      
+              if (ongoingMeal) {
+                const { _id, ...mealData } = ongoingMeal; // remove _id to avoid duplicate key error
+      
+                // Insert into main meals collection
+                await mealsCollection.insertOne(mealData);
+      
+                // Remove from upcoming meals collection
+                await upcomingMealsCollection.deleteOne(query);
+      
+                released = true; // mark that meal was published
+              }
+            }
+          }
+      
+          return res.json({ success: true, action, released });
+        } catch (error) {
+          console.error("Error in PATCH /meals/:id/like:", error);
+          return res.status(500).json({ error: "Failed to toggle like" });
+        }
+      });
 
     // Get meals by category, limit 6 ----------------------------||||||||||||||||||||||||----jhamela ache
 
