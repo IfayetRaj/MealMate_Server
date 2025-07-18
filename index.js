@@ -17,7 +17,7 @@ const stripe = new Stripe(process.env.PAYMENT_GETWAY_KEY);
 const cors = require("cors");
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: "https://mealmate-93072.web.app/",
     credentials: true,
   })
 );
