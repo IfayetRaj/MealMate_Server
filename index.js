@@ -1,10 +1,13 @@
 const express = require("express");
-// import express from "express";
+// const cookieParser = require("cookie-parser");
+// const bcrypt = require("bcrypt");
+// import bcrypt from "bcryptjs";
+const jwt = require("jsonwebtoken");
+// import admin from "firebase-admin";
+// const admin = require("firebase-admin");
 const app = express();
-// const dotenv = require("dotenv");
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-// import Stripe from "stripe";
 require("dotenv").config();
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.PAYMENT_GETWAY_KEY);
@@ -20,11 +23,10 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
 
 // uri
 const uri =
-  "mongodb+srv://mealmate:rRoO2FZI8fHdYI8v@cluster0.ddy6nyc.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+  `mongodb+srv://${process.env.MONGODB}0.ddy6nyc.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -35,7 +37,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     const usersCollection = client.db("mealmate").collection("users");
     const mealsCollection = client.db("mealmate").collection("meals");
@@ -381,6 +382,54 @@ async function run() {
       }
     });
 
+    // get review by review id
+    app.get("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid review ID" });
+      }
+
+      try {
+        const review = await reviewCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!review) {
+          return res.status(404).json({ error: "Review not found" });
+        }
+
+        res.send(review);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch review" });
+      }
+    });
+
+    // updating comment
+    app.patch("/reviews/:id", async (req, res) => {
+      const reviewId = req.params.id;
+      const { text } = req.body;
+
+      try {
+        const result = await reviewCollection.updateOne(
+          { _id: new ObjectId(reviewId) },
+          { $set: { text: text } }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({ error: "Review not found or not updated." });
+        }
+
+        res.json({ success: true, updatedCount: result.modifiedCount });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update review." });
+      }
+    });
+
     // deleting request
     app.delete("/requests/:id", async (req, res) => {
       const id = req.params.id;
@@ -493,8 +542,8 @@ async function run() {
       }
     });
 
-    // Get meals by category, limit 6 ----------------------------||||||||||||||||||||||||----jhamela ache
 
+    // Get meals by category with limit
     app.get("/meals-by-category", async (req, res) => {
       const { category } = req.query;
 
@@ -836,7 +885,6 @@ async function run() {
           { $set: { badge: planName } }
         );
 
-
         const paymentHistory = {
           userEmail,
           planName,
@@ -861,23 +909,25 @@ async function run() {
 
     //   payment history by email
     app.get("/payments/:email", async (req, res) => {
-        const email = req.params.email;
-      
-        try {
-          const history = await paymentCollection.find({ userEmail: email }).toArray();
-      
-          if (history.length === 0) {
-            return res
-              .status(404)
-              .json({ error: "No payment history found for this user" });
-          }
-      
-          res.send(history);
-        } catch (err) {
-          console.error(err);
-          res.status(500).json({ error: "Failed to fetch payment history" });
+      const email = req.params.email;
+
+      try {
+        const history = await paymentCollection
+          .find({ userEmail: email })
+          .toArray();
+
+        if (history.length === 0) {
+          return res
+            .status(404)
+            .json({ error: "No payment history found for this user" });
         }
-      });
+
+        res.send(history);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch payment history" });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
