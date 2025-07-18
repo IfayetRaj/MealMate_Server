@@ -5,7 +5,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 // import admin from "firebase-admin";
 // const admin = require("firebase-admin");
-const verifyToken = require("./verifyToken"); 
+
 const app = express();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -64,7 +64,7 @@ async function run() {
     });
 
     // get user data by email (search)
-    app.get("/user/:email",verifyToken, async (req, res) => {
+    app.get("/user/:email", async (req, res) => {
       const email = req.params.email;
 
       const query = { email: email };
@@ -174,7 +174,7 @@ async function run() {
     );
 
     // POST an upcoming meal
-    app.post("/upcoming-meals",verifyToken, async (req, res) => {
+    app.post("/upcoming-meals", async (req, res) => {
       const mealData = req.body;
 
       if (!mealData.title || !mealData.category || !mealData.price) {
@@ -202,7 +202,7 @@ async function run() {
     });
 
     // publishsing upcoming meals
-    app.post("/upcoming-meals/:id",verifyToken, async (req, res) => {
+    app.post("/upcoming-meals/:id", async (req, res) => {
       const id = req.params.id;
 
       if (!ObjectId.isValid(id)) {
@@ -281,7 +281,7 @@ async function run() {
     });
 
     // GET all upcoming meals
-    app.get("/upcoming-meals",verifyToken, async (req, res) => {
+    app.get("/upcoming-meals", async (req, res) => {
       try {
         const upcomingMeals = await upcomingMealsCollection
           .find({})
@@ -295,7 +295,7 @@ async function run() {
     });
 
     // review posting
-    app.post("/reviews",verifyToken, async (req, res) => {
+    app.post("/reviews", async (req, res) => {
       const {
         mealId,
         userId,
@@ -348,7 +348,7 @@ async function run() {
       }
     });
     // get all data from reviews
-    app.get("/reviews",verifyToken, async (req, res) => {
+    app.get("/reviews", async (req, res) => {
       try {
         const reviews = await reviewCollection.find().toArray();
         res.send(reviews);
@@ -359,7 +359,7 @@ async function run() {
     });
 
     // getting requests based on user email
-    app.get("/requests/:email",verifyToken, async (req, res) => {
+    app.get("/requests/:email", async (req, res) => {
       try {
         const email = req.params.email;
         const query = { userEmail: email };
@@ -372,7 +372,7 @@ async function run() {
     });
 
     // getting reviews by user email
-    app.get("/reviews/user/:email",verifyToken, async (req, res) => {
+    app.get("/reviews/user/:email", async (req, res) => {
       const email = req.params.email;
 
       try {
@@ -418,7 +418,7 @@ async function run() {
 
     
     // get review by review id
-    app.get("/reviews/:id",verifyToken, async (req, res) => {
+    app.get("/reviews/:id", async (req, res) => {
       const id = req.params.id;
 
       if (!ObjectId.isValid(id)) {
@@ -442,7 +442,7 @@ async function run() {
     });
 
     // updating comment
-    app.patch("/reviews/:id",verifyToken, async (req, res) => {
+    app.patch("/reviews/:id", async (req, res) => {
       const reviewId = req.params.id;
       const { text } = req.body;
 
@@ -466,7 +466,7 @@ async function run() {
     });
 
     // deleting request
-    app.delete("/requests/:id",verifyToken, async (req, res) => {
+    app.delete("/requests/:id", async (req, res) => {
       const id = req.params.id;
 
       if (!ObjectId.isValid(id)) {
@@ -490,7 +490,7 @@ async function run() {
     });
 
     //   get reviews by meal ID
-    app.get("/reviews/:mealId",verifyToken, async (req, res) => {
+    app.get("/reviews/:mealId", async (req, res) => {
       const mealId = req.params.mealId;
 
       try {
@@ -507,7 +507,7 @@ async function run() {
     });
 
     // get revirews by meal ID 
-    app.get("/reviews/meal/:id",verifyToken, async (req, res) => {
+    app.get("/reviews/meal/:id", async (req, res) => {
       const mealId = req.params.id;
 
       if (!ObjectId.isValid(mealId)) {
@@ -528,7 +528,7 @@ async function run() {
     });
 
     // likes by meal id
-    app.patch("/meals/:id/like",verifyToken, async (req, res) => {
+    app.patch("/meals/:id/like", async (req, res) => {
       const id = req.params.id;
 
       if (!ObjectId.isValid(id)) {
@@ -680,7 +680,7 @@ async function run() {
     });
 
     // meal details page
-    app.get("/meals/:id",verifyToken, async (req, res) => {
+    app.get("/meals/:id", async (req, res) => {
       const id = req.params.id;
 
       if (!ObjectId.isValid(id)) {
@@ -757,7 +757,7 @@ async function run() {
     });
 
     // get all requests
-    app.get("/requested-meals",verifyToken, async (req, res) => {
+    app.get("/requested-meals", async (req, res) => {
       try {
         const allRequests = await requestsCollection
           .aggregate([
@@ -857,7 +857,7 @@ async function run() {
     });
 
     // Get recent  users
-    app.get("/users/recent/:email",verifyToken, async (req, res) => {
+    app.get("/users/recent/:email", async (req, res) => {
       const currentEmail = req.params.email;
 
       try {
